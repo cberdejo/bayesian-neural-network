@@ -5,9 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "hamiltorch",
     "matplotlib>=3.10.8",
     "numpy>=2.4.2",
     "polars>=1.38.1",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
+    "torch>=2.10.0",
 ]
+
+[tool.uv.sources]
+hamiltorch = { git = "https://github.com/AdamCobb/hamiltorch.git", rev = "master" }
