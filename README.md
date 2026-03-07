@@ -1,7 +1,4 @@
 # Bayesian Neural Network Implementations
-
-Reference implementations and clear documentation of state-of-the-art Bayesian Neural Network (BNN) methods. Suited for safety-critical and high-stakes applications where predictive uncertainty matters more than a single point estimate.
-
 [![Python](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -11,6 +8,8 @@ Reference implementations and clear documentation of state-of-the-art Bayesian N
 ![NumPy](https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)
 ![SciPy](https://img.shields.io/badge/SciPy-8CAAE6?style=for-the-badge&logo=scipy&logoColor=white)
+
+Reference implementations and clear documentation of state-of-the-art Bayesian Neural Network (BNN) methods. Suited for safety-critical and high-stakes applications where predictive uncertainty matters more than a single point estimate.
 
 ---
 
