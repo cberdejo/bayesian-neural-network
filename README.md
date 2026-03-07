@@ -1,82 +1,116 @@
 # Bayesian Neural Network Implementations
 
-This repository provides clear explanations and reference implementations of state-of-the-art Bayesian Neural Network (BNN) models. These approaches are particularly useful in safety-critical and high-stakes applications, where quantifying predictive uncertainty is essential rather than returning single point estimates.
+Reference implementations and clear documentation of state-of-the-art Bayesian Neural Network (BNN) methods. Suited for safety-critical and high-stakes applications where predictive uncertainty matters more than a single point estimate.
 
-The following BNN approaches are implemented and explained:
-- Approximate Bayesian Computation by Subset Simulation (ABC-SS)
-- Hamiltonian Monte Carlo (HMC)
-- Monte Carlo Dropout
-- Probabilistic Backpropagation (PBP)
-- Variational Inference for Bayesian Neural Networks (VI)
+[![Python](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)
+![SciPy](https://img.shields.io/badge/SciPy-8CAAE6?style=for-the-badge&logo=scipy&logoColor=white)
+
+---
+
+## Implemented Methods
+
+| Method | Description |
+|--------|-------------|
+| **ABC-SS** | Approximate Bayesian Computation by Subset Simulation |
+| **HMC** | Hamiltonian Monte Carlo |
+| **MC Dropout** | Monte Carlo Dropout |
+| **PBP** | Probabilistic Backpropagation |
+| **VI-BB** | Variational Inference for Bayesian Neural Networks (Bayes by Backprop) |
+
+---
 
 ## Repository Structure
-```bash 
-├── src
-│   ├── notebooks        # Model explanations
+
+```
+bayesian-nn/
+├── src/
+│   ├── notebooks/     # Explanatory notebooks per method
 │   │   ├── abc_ss
 │   │   ├── abcss_hmc_vi
 │   │   ├── hmc
 │   │   ├── mc_dropout
 │   │   ├── pbp
 │   │   └── vi_bbb
-│   ├── packages         # Ready-to-use implemented algorithms
+│   ├── packages/     # Reusable BNN algorithm implementations (see below)
 │   │   ├── abc_ss
-│   │   ├── abcss_hmc_vi
 │   │   ├── hmc
 │   │   ├── mc_dropout
 │   │   ├── pbp
-│   │   └── vi_bbb
-│   ├── demo             # Real data demonstration
+│   │   └── vi_bb
+│   └── demo/         # Streamlit demo application
+├── dataset/          # Default dataset and assets
+└── pyproject.toml
 ```
 
-## How to Run the Demo Using `just`
+### The `src/packages` Directory
 
-This project includes a `Justfile` with a recipe to launch an interactive Streamlit demo using the **Concrete Compressive Strength** dataset.
+`src/packages` holds the core BNN implementations as importable Python packages. Each subpackage provides a **model**, a **config** (Pydantic), and a consistent interface for training and prediction. The demo and notebooks depend on these packages.
+
+| Package | Main exports | Role |
+|---------|--------------|------|
+| **abc_ss** | `ABCSubSim`, `ABCSSConfig` | Approximate Bayesian Computation via subset simulation for posterior sampling. |
+| **hmc** | `HMCNet`, `HMCConfig`, `sample_hmc`, `predict_hmc` | Hamiltonian Monte Carlo sampling for Bayesian neural networks (e.g. via hamiltorch). |
+| **mc_dropout** | `MCDropoutNet`, `MCDropoutConfig`, `train_mc_dropout`, `predict_mc_dropout` | Monte Carlo Dropout: uncertainty from multiple forward passes with dropout enabled at test time. |
+| **pbp** | `PBP_net`, `PBP`, `PBPConfig`, `Network`, `Network_layer`, `Prior` | Probabilistic Backpropagation: analytical approximate inference over network weights. |
+| **vi_bb** | `BayesianMLP`, `DenseVariational`, `VIBBConfig`, `nll_gaussian` | Variational inference (Bayes by Backprop) with reparameterized Gaussian posteriors. |
+
+Use these packages in your own scripts by importing from `src.packages` (with the project root on `PYTHONPATH`) or by installing the project as a package.
+
+---
+
+## Running the Demo
+
+The project includes a **Justfile** recipe that runs an interactive Streamlit demo on the **Concrete Compressive Strength** dataset.
 
 ### Prerequisites
 
-- **Python**: Version \(\geq 3.14\) (as specified in `pyproject.toml`)
-- **just**: Command runner. On Ubuntu/Debian, install with:
+- **Python** >= 3.14 (see `pyproject.toml`)
+- **just** — command runner. On Ubuntu/Debian: `sudo apt install just`
+- **uv** — Python environment and dependency manager: [github.com/astral-sh/uv](https://github.com/astral-sh/uv)
 
-```bash
-sudo apt install just
-```
+### Launch
 
-- **uv**: Python dependency and environment manager. See instructions at `https://github.com/astral-sh/uv`.
-
-### Launching the Demo
-
-From the root of the repository:
+From the repository root:
 
 ```bash
 just demo
 ```
 
-This recipe internally runs:
+This runs:
 
 ```bash
 uv sync
 uv run streamlit run ./src/demo/streamlit_app.py
 ```
 
-This ensures dependencies in `pyproject.toml` are synchronized and the Streamlit application is launched.
+### Demo Features
 
-### About the Demo and Default Dataset
+- Load and preprocess tabular data (default or user-uploaded).
+- Choose a BNN model: MC Dropout, VI-BB, PBP, HMC, or ABC-SS.
+- Tune hyperparameters from the sidebar.
+- Train and inspect:
+  - Metrics: RMSE, MAE, R², NLL, confidence interval coverage.
+  - Prediction plots with uncertainty.
 
-The Streamlit demo allows you to:
+### Default Dataset
 
-- Load and clean a tabular dataset
-- Select a BNN model (MC Dropout, VI-BB, PBP, HMC, or ABC-SS)
-- Adjust hyperparameters from the sidebar
-- Train the model and visualize:
-  - Metrics (RMSE, MAE, \(R^2\), NLL, confidence interval coverage)
-  - Prediction plots with uncertainty
+With **"Use default dataset"** selected, the app loads the [Concrete Compressive Strength](https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength) dataset from `dataset/Concrete_Data.xls`, so you can try all models without preparing data.
 
+![Concrete strength dataset](dataset/concrete_strength.png)
 
+You can also upload your own file (CSV, XLS, or XLSX) and run the same training and evaluation pipeline.
 
+---
 
-By default, if you select **"Use default dataset"** in the sidebar, the app loads the [**Concrete Compressive Strength**] (https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength) dataset, which is stored at [dataset/Concrete_Data.xls](/dataset/Concrete_Data.xls). This provides an out-of-the-box example for experimenting with different Bayesian architectures, with no need to prepare your own data.
+## License
 
-[dataset-concrete](dataset/concrete_strength.png)
+MIT License. Copyright (c) 2026 Christian Berdejo Sánchez.
 
-Alternatively, you can upload your own dataset (\*.csv, \*.xls, \*.xlsx) from the same interface and run the full training and inference workflow with your data.
+See [LICENSE](LICENSE) for the full text.
