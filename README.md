@@ -75,7 +75,7 @@ The Streamlit demo allows you to:
 
 
 
-By default, if you select **"Use default dataset"** in the sidebar, the app loads the **Concrete Compressive Strength** ([UCI(https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength)]) dataset, which is stored at `dataset/Concrete_Data.xls`. This provides an out-of-the-box example for experimenting with different Bayesian architectures, with no need to prepare your own data.
+By default, if you select **"Use default dataset"** in the sidebar, the app loads the [**Concrete Compressive Strength**] (https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength) dataset, which is stored at [dataset/Concrete_Data.xls](/dataset/Concrete_Data.xls). This provides an out-of-the-box example for experimenting with different Bayesian architectures, with no need to prepare your own data.
 
 [dataset-concrete](dataset/concrete_strength.png)
 
