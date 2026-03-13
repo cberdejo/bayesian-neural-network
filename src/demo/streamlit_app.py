@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 import streamlit as st
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
@@ -28,6 +27,7 @@ from packages.mc_dropout import (
 )
 from packages.pbp import PBPConfig, PBP_net
 from packages.vi_bb import BayesianMLP, VIBBConfig
+from metrics.compute_metrics import compute_metrics
 
 DATASET_PATH = PROJECT_ROOT / "dataset" / "Concrete_Data.xls"
 MODEL_OPTIONS = ["MC Dropout", "VI-BB", "PBP", "HMC", "ABC-SS"]
@@ -93,26 +93,6 @@ def _read_dataset(source: Path | io.BytesIO, file_name: str) -> pl.DataFrame:
 def _clean_dataset(df: pl.DataFrame) -> pl.DataFrame:
     """Removes duplicate and null rows, preserving original order of observations."""
     return df.unique(maintain_order=True).drop_nulls()
-
-
-def build_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_std: np.ndarray) -> dict[str, float]:
-    """Computes error, fit, and calibration metrics for probabilistic predictions."""
-    sigma = np.clip(y_std, 1e-6, None)
-    mse = mean_squared_error(y_true, y_pred)
-    rmse = float(np.sqrt(mse))
-    mae = float(mean_absolute_error(y_true, y_pred))
-    r2 = float(r2_score(y_true, y_pred))
-    nll = float(np.mean(0.5 * np.log(2 * np.pi * sigma**2) + ((y_true - y_pred) ** 2) / (2 * sigma**2)))
-    lower = y_pred - 1.96 * sigma
-    upper = y_pred + 1.96 * sigma
-    coverage = float(np.mean((y_true >= lower) & (y_true <= upper)))
-    return {
-        "RMSE": rmse,
-        "MAE": mae,
-        "R2": r2,
-        "NLL (Gauss)": nll,
-        "95% Coverage": coverage,
-    }
 
 
 def plot_inference(y_true: np.ndarray, y_pred: np.ndarray, y_std: np.ndarray) -> plt.Figure:
@@ -462,13 +442,25 @@ def main() -> None:
                 y_pred = scaler_y.inverse_transform(y_pred.reshape(-1, 1)).flatten()
                 y_std = y_std * scaler_y.scale_[0]
 
-            metrics = build_metrics(y_test, y_pred, y_std)
+            metrics = compute_metrics(y_test, y_pred, y_std, alpha=0.05)
+
             m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("RMSE", f"{metrics['RMSE']:.4f}")
-            m2.metric("MAE", f"{metrics['MAE']:.4f}")
-            m3.metric("R2", f"{metrics['R2']:.4f}")
-            m4.metric("NLL", f"{metrics['NLL (Gauss)']:.4f}")
-            m5.metric("Coverage 95%", f"{metrics['95% Coverage']:.2%}")
+            m2.metric("PICP", f"{metrics['PICP']:.4f}")
+            m3.metric("MPIW", f"{metrics['MPIW']:.4f}")
+            m4.metric("NLL", f"{metrics['NLL']:.4f}")
+            m5.metric("Winkler", f"{metrics['Winkler']:.4f}")
+
+            with st.expander("What do these metrics mean?"):
+                st.markdown(
+                    """
+- **RMSE**: Root-mean-squared error of the predictive mean; lower is better.
+- **PICP**: Fraction of true targets falling inside the predictive interval (e.g. 95 %).
+- **MPIW**: Average width of the predictive interval; narrower means sharper predictions.
+- **NLL**: Gaussian negative log-likelihood, combining accuracy and uncertainty calibration.
+- **Winkler**: Proper scoring rule that penalises intervals that are too wide or that miss the true value.
+"""
+                )
 
             st.subheader("Inference plot")
             fig = plot_inference(y_test, y_pred, y_std)
