@@ -196,7 +196,7 @@ def run_model(
         cfg = PBPConfig(
             layer_sizes=[input_dim, *hidden, 1],
             n_epochs=params["n_epochs"],
-            normalize=params["normalize"],
+            normalize=False,
             seed=params["seed"],
         )
         model = PBP_net.from_config(X_train, y_train, cfg)
@@ -298,14 +298,12 @@ def model_settings(model_name: str) -> dict:
             """
 **Hyperparameters (PBP)**
 - `n_epochs`: number of Bayesian update iterations.
-- `normalize`: internally normalizes features/target for stability.
 """
         )
         return {
             "hidden_layers": hidden_layers,
             "seed": int(seed),
             "n_epochs": st.number_input("n_epochs", min_value=1, value=25, step=1),
-            "normalize": st.checkbox("normalize", value=True),
         }
 
     if model_name == "HMC":
