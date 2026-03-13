@@ -95,8 +95,18 @@ uv run streamlit run ./src/demo/streamlit_app.py
 - Choose a BNN model: MC Dropout, VI-BB, PBP, HMC, or ABC-SS.
 - Tune hyperparameters from the sidebar.
 - Train and inspect:
-  - Metrics: RMSE, MAE, R², NLL, confidence interval coverage.
+  - Metrics: RMSE, PCIP, MPIW, NLL, Winkler
   - Prediction plots with uncertainty.
+
+#### Metrics shown in the Streamlit demo
+
+For the probabilistic predictions, the demo reports:
+
+- **RMSE**: Root-mean-squared error between \(y_{\text{true}}\) and the predictive mean \(y_{\text{pred}}\). It measures point-estimate accuracy.
+- **PICP**: Prediction Interval Coverage Probability, i.e. the fraction of targets that fall inside the central predictive interval at a given confidence level (e.g. 95 %).
+- **MPIW**: Mean Prediction Interval Width, i.e. the average width of that predictive interval. Narrower intervals mean sharper (more confident) predictions.
+- **NLL**: Gaussian Negative Log-Likelihood under \(\mathcal{N}(y_{\text{pred}}, \sigma^2)\). It trades off accuracy and calibration of the predictive uncertainty.
+- **Winkler**: Winkler score at level \(\alpha\), which combines interval width and coverage into a single proper scoring rule (penalising intervals that are too wide or that miss the true value).
 
 ### Default Dataset
 
