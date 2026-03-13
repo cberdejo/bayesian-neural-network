@@ -31,9 +31,32 @@ from packages.vi_bb import BayesianMLP, VIBBConfig
 
 DATASET_PATH = PROJECT_ROOT / "dataset" / "Concrete_Data.xls"
 MODEL_OPTIONS = ["MC Dropout", "VI-BB", "PBP", "HMC", "ABC-SS"]
+NOTEBOOK_URLS = {
+    "MC Dropout": (
+        "https://github.com/cberdejo/bayesian-neural-network/"
+        "blob/main/src/notebooks/mc-dropout/mc_dropout.ipynb"
+    ),
+    "VI-BB": (
+        "https://github.com/cberdejo/bayesian-neural-network/"
+        "blob/main/src/notebooks/vi-bb/vi_bb.ipynb"
+    ),
+    "PBP": (
+        "https://github.com/cberdejo/bayesian-neural-network/"
+        "blob/main/src/notebooks/pbp/pbp.ipynb"
+    ),
+    "HMC": (
+        "https://github.com/cberdejo/bayesian-neural-network/"
+        "blob/main/src/notebooks/hmc/hmc.ipynb"
+    ),
+    "ABC-SS": (
+        "https://github.com/cberdejo/bayesian-neural-network/"
+        "blob/main/src/notebooks/abc-ss/abc_ss.ipynb"
+    ),
+}
 
 
 def parse_hidden_layers(raw: str) -> list[int]:
+    """Parse a comma-separated string into a list of valid hidden layer sizes."""
     values = [v.strip() for v in raw.split(",") if v.strip()]
     if not values:
         raise ValueError("You must enter at least one hidden layer. Example: 64,32")
@@ -45,6 +68,7 @@ def parse_hidden_layers(raw: str) -> list[int]:
 
 @st.cache_data(show_spinner=False)
 def load_and_clean_dataset(path: Path) -> pl.DataFrame:
+    """Loads dataset from disk and applies basic cleaning, with Streamlit cache."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
     return _clean_dataset(_read_dataset(path, path.name))
@@ -52,10 +76,12 @@ def load_and_clean_dataset(path: Path) -> pl.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_and_clean_uploaded_dataset(file_bytes: bytes, file_name: str) -> pl.DataFrame:
+    """Loads a user-uploaded dataset into memory and returns a cleaned version."""
     return _clean_dataset(_read_dataset(io.BytesIO(file_bytes), file_name))
 
 
 def _read_dataset(source: Path | io.BytesIO, file_name: str) -> pl.DataFrame:
+    """Reads a dataset in CSV/Excel format and returns a Polars DataFrame."""
     suffix = Path(file_name).suffix.lower()
     if suffix == ".csv":
         return pl.read_csv(source)
@@ -65,10 +91,12 @@ def _read_dataset(source: Path | io.BytesIO, file_name: str) -> pl.DataFrame:
 
 
 def _clean_dataset(df: pl.DataFrame) -> pl.DataFrame:
+    """Removes duplicate and null rows, preserving original order of observations."""
     return df.unique(maintain_order=True).drop_nulls()
 
 
 def build_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_std: np.ndarray) -> dict[str, float]:
+    """Computes error, fit, and calibration metrics for probabilistic predictions."""
     sigma = np.clip(y_std, 1e-6, None)
     mse = mean_squared_error(y_true, y_pred)
     rmse = float(np.sqrt(mse))
@@ -88,6 +116,7 @@ def build_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_std: np.ndarray) -> 
 
 
 def plot_inference(y_true: np.ndarray, y_pred: np.ndarray, y_std: np.ndarray) -> plt.Figure:
+    """Generates fit and uncertainty plots for inference results."""
     order = np.argsort(y_true)
     yt = y_true[order]
     yp = y_pred[order]
@@ -125,6 +154,7 @@ def run_model(
     y_train: np.ndarray,
     params: dict,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Trains the selected Bayesian model and returns mean prediction, std, and config."""
     input_dim = X_train.shape[1]
     hidden = parse_hidden_layers(params["hidden_layers"])
 
@@ -207,17 +237,18 @@ def run_model(
     return y_pred.reshape(-1), y_std.reshape(-1), asdict(cfg)
 
 
-def model_sidebar(model_name: str) -> dict:
-    st.sidebar.subheader("Architecture")
-    hidden_layers = st.sidebar.text_input(
+def model_settings(model_name: str) -> dict:
+    """Builds Streamlit UI controls for each model and returns selected hyperparameters."""
+    st.subheader("Architecture")
+    hidden_layers = st.text_input(
         "Hidden layers",
         value="32,16",
         help="Comma-separated list. Example: 64,32 defines two hidden layers.",
     )
-    seed = st.sidebar.number_input("Seed", value=42, step=1)
+    seed = st.number_input("Seed", value=42, step=1)
 
     if model_name == "MC Dropout":
-        st.sidebar.markdown(
+        st.markdown(
             """
 **Hyperparameters (MC Dropout)**
 - `dropout_p`: probability of dropping neurons; controls epistemic uncertainty.
@@ -230,15 +261,15 @@ def model_sidebar(model_name: str) -> dict:
         return {
             "hidden_layers": hidden_layers,
             "seed": int(seed),
-            "dropout_p": st.sidebar.slider("dropout_p", 0.05, 0.9, 0.2, 0.05),
-            "epochs": st.sidebar.number_input("epochs", min_value=10, value=150, step=10),
-            "batch_size": st.sidebar.number_input("batch_size", min_value=4, value=32, step=4),
-            "lr": st.sidebar.number_input("lr", min_value=1e-5, value=1e-3, step=1e-4, format="%.5f"),
-            "mc_samples": st.sidebar.number_input("mc_samples", min_value=10, value=100, step=10),
+            "dropout_p": st.slider("dropout_p", 0.05, 0.9, 0.2, 0.05),
+            "epochs": st.number_input("epochs", min_value=10, value=150, step=10),
+            "batch_size": st.number_input("batch_size", min_value=4, value=32, step=4),
+            "lr": st.number_input("lr", min_value=1e-5, value=1e-3, step=1e-4, format="%.5f"),
+            "mc_samples": st.number_input("mc_samples", min_value=10, value=100, step=10),
         }
 
     if model_name == "VI-BB":
-        st.sidebar.markdown(
+        st.markdown(
             """
 **Hyperparameters (VI-BB)**
 - `activation`: non-linear activation in hidden layers.
@@ -251,19 +282,19 @@ def model_sidebar(model_name: str) -> dict:
         return {
             "hidden_layers": hidden_layers,
             "seed": int(seed),
-            "activation": st.sidebar.selectbox("activation", ["tanh", "relu"]),
-            "prior_sigma_1": st.sidebar.number_input("prior_sigma_1", min_value=0.01, value=1.5, step=0.05),
-            "prior_sigma_2": st.sidebar.number_input("prior_sigma_2", min_value=0.01, value=0.1, step=0.01),
-            "prior_pi": st.sidebar.slider("prior_pi", 0.01, 0.99, 0.5, 0.01),
-            "kl_weight": st.sidebar.number_input("kl_weight", min_value=1e-4, value=1.0, step=0.1, format="%.4f"),
-            "noise_std": st.sidebar.number_input("noise_std", min_value=1e-3, value=1.0, step=0.1, format="%.3f"),
-            "lr": st.sidebar.number_input("lr", min_value=1e-5, value=0.01, step=1e-3, format="%.5f"),
-            "epochs": st.sidebar.number_input("epochs", min_value=50, value=600, step=50),
-            "mc_samples": st.sidebar.number_input("mc_samples", min_value=10, value=100, step=10),
+            "activation": st.selectbox("activation", ["tanh", "relu"]),
+            "prior_sigma_1": st.number_input("prior_sigma_1", min_value=0.01, value=1.5, step=0.05),
+            "prior_sigma_2": st.number_input("prior_sigma_2", min_value=0.01, value=0.1, step=0.01),
+            "prior_pi": st.slider("prior_pi", 0.01, 0.99, 0.5, 0.01),
+            "kl_weight": st.number_input("kl_weight", min_value=1e-4, value=1.0, step=0.1, format="%.4f"),
+            "noise_std": st.number_input("noise_std", min_value=1e-3, value=1.0, step=0.1, format="%.3f"),
+            "lr": st.number_input("lr", min_value=1e-5, value=0.01, step=1e-3, format="%.5f"),
+            "epochs": st.number_input("epochs", min_value=50, value=600, step=50),
+            "mc_samples": st.number_input("mc_samples", min_value=10, value=100, step=10),
         }
 
     if model_name == "PBP":
-        st.sidebar.markdown(
+        st.markdown(
             """
 **Hyperparameters (PBP)**
 - `n_epochs`: number of Bayesian update iterations.
@@ -273,12 +304,12 @@ def model_sidebar(model_name: str) -> dict:
         return {
             "hidden_layers": hidden_layers,
             "seed": int(seed),
-            "n_epochs": st.sidebar.number_input("n_epochs", min_value=1, value=25, step=1),
-            "normalize": st.sidebar.checkbox("normalize", value=True),
+            "n_epochs": st.number_input("n_epochs", min_value=1, value=25, step=1),
+            "normalize": st.checkbox("normalize", value=True),
         }
 
     if model_name == "HMC":
-        st.sidebar.markdown(
+        st.markdown(
             """
 **Hyperparameters (HMC)**
 - `step_size`: step size of the Hamiltonian integrator.
@@ -292,15 +323,15 @@ def model_sidebar(model_name: str) -> dict:
         return {
             "hidden_layers": hidden_layers,
             "seed": int(seed),
-            "step_size": st.sidebar.number_input("step_size", min_value=1e-5, value=0.0015, step=1e-4, format="%.5f"),
-            "num_samples": st.sidebar.number_input("num_samples", min_value=20, value=120, step=20),
-            "num_steps_per_sample": st.sidebar.number_input("num_steps_per_sample", min_value=5, value=10, step=1),
-            "tau_out": st.sidebar.number_input("tau_out", min_value=0.01, value=100.0, step=1.0),
-            "tau_prior": st.sidebar.number_input("tau_prior", min_value=0.01, value=1.0, step=0.1),
-            "burn_frac": st.sidebar.slider("burn_frac", 0.05, 0.9, 0.5, 0.05),
+            "step_size": st.number_input("step_size", min_value=1e-5, value=0.0015, step=1e-4, format="%.5f"),
+            "num_samples": st.number_input("num_samples", min_value=20, value=120, step=20),
+            "num_steps_per_sample": st.number_input("num_steps_per_sample", min_value=5, value=10, step=1),
+            "tau_out": st.number_input("tau_out", min_value=0.01, value=100.0, step=1.0),
+            "tau_prior": st.number_input("tau_prior", min_value=0.01, value=1.0, step=0.1),
+            "burn_frac": st.slider("burn_frac", 0.05, 0.9, 0.5, 0.05),
         }
 
-    st.sidebar.markdown(
+    st.markdown(
         """
 **Hyperparameters (ABC-SS)**
 - `n_samples`: number of samples per level (higher = more cost).
@@ -314,33 +345,34 @@ def model_sidebar(model_name: str) -> dict:
     return {
         "hidden_layers": hidden_layers,
         "seed": int(seed),
-        "activation": st.sidebar.selectbox("activation", ["tanh", "relu", "sigmoid"]),
-        "n_samples": st.sidebar.number_input("n_samples", min_value=200, value=2500, step=100),
-        "sim_levels": st.sidebar.number_input("sim_levels", min_value=1, value=3, step=1),
-        "p0": st.sidebar.slider("p0", 0.05, 0.5, 0.2, 0.05),
-        "initial_std": st.sidebar.number_input("initial_std", min_value=0.01, value=0.4, step=0.05, format="%.2f"),
-        "prior_low": st.sidebar.number_input("prior_low", value=-1.0, step=0.1),
-        "prior_high": st.sidebar.number_input("prior_high", value=1.0, step=0.1),
-        "n_best": st.sidebar.number_input("n_best", min_value=10, value=200, step=10),
+        "activation": st.selectbox("activation", ["tanh", "relu", "sigmoid"]),
+        "n_samples": st.number_input("n_samples", min_value=200, value=2500, step=100),
+        "sim_levels": st.number_input("sim_levels", min_value=1, value=3, step=1),
+        "p0": st.slider("p0", 0.05, 0.5, 0.2, 0.05),
+        "initial_std": st.number_input("initial_std", min_value=0.01, value=0.4, step=0.05, format="%.2f"),
+        "prior_low": st.number_input("prior_low", value=-1.0, step=0.1),
+        "prior_high": st.number_input("prior_high", value=1.0, step=0.1),
+        "n_best": st.number_input("n_best", min_value=10, value=200, step=10),
     }
 
 
 def main() -> None:
+    """Orchestrates the Streamlit UI: data, configuration, training, and results."""
     st.set_page_config(page_title="Demo Bayesian-NN", layout="wide")
-    st.title("Streamlit Demo - Bayesian Neural Networks")
+    st.title("Bayesian Neural Networks")
     st.write(
         "Visualize the concrete dataset, clean the data, select a BNN model, "
         "tune hyperparameters, and run inference with metrics."
     )
 
-    st.sidebar.subheader("Dataset")
-    dataset_mode = st.sidebar.radio(
+    st.subheader("Dataset")
+    dataset_mode = st.radio(
         "Dataset source",
         options=["Use default dataset", "Upload dataset"],
     )
 
     if dataset_mode == "Upload dataset":
-        uploaded_file = st.sidebar.file_uploader(
+        uploaded_file = st.file_uploader(
             "Upload a dataset",
             type=["xls", "xlsx", "csv"],
             help="Supported formats: .xls, .xlsx, .csv",
@@ -378,28 +410,59 @@ def main() -> None:
         st.warning("Select at least one feature to train the model.")
         return
 
-    model_name = st.sidebar.selectbox("Model", MODEL_OPTIONS)
-    params = model_sidebar(model_name)
+    st.markdown("---")
+    st.subheader("Model Configuration")
+    model_name_col, info_col_button = st.columns([11, 1], vertical_alignment="bottom")
 
-    st.sidebar.subheader("Dataset split")
-    test_size = st.sidebar.slider("test_size", 0.1, 0.5, 0.2, 0.05)
+    with model_name_col:
+        model_name = st.selectbox("Model", MODEL_OPTIONS)
+    with info_col_button:
+        st.link_button(
+            "ℹ️ Theory",
+            url=NOTEBOOK_URLS.get(model_name),
+        )
+
+    params = model_settings(model_name)
+
+    st.subheader("Dataset split")
+    test_size = st.slider("test_size", 0.1, 0.5, 0.2, 0.05)
+    st.markdown("---")
+
+    st.subheader("Preprocessing")
+    scale_X = st.checkbox("Scale Features (X)", value=True)
+    scale_y = st.checkbox("Scale Target (y)", value=True)
 
     if st.button("Train and run inference", type="primary"):
         try:
             X = np.asarray(df[selected_features].to_numpy(), dtype=np.float64)
             y = np.asarray(df[target_col].to_numpy(), dtype=np.float64)
+
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=test_size, random_state=params["seed"]
             )
 
-            scaler = StandardScaler()
-            X_train_scaled = scaler.fit_transform(X_train)
-            X_test_scaled = scaler.transform(X_test)
+            if scale_X:
+                scaler_X = StandardScaler()
+                X_train_model = scaler_X.fit_transform(X_train)
+                X_test_model = scaler_X.transform(X_test)
+            else:
+                X_train_model = X_train
+                X_test_model = X_test
+
+            if scale_y:
+                scaler_y = StandardScaler()
+                y_train_model = scaler_y.fit_transform(y_train.reshape(-1, 1)).flatten()
+            else:
+                y_train_model = y_train
 
             with st.spinner("Training model and running inference..."):
                 y_pred, y_std, cfg_dict = run_model(
-                    model_name, X_train_scaled, X_test_scaled, y_train, params
+                    model_name, X_train_model, X_test_model, y_train_model, params
                 )
+
+            if scale_y:
+                y_pred = scaler_y.inverse_transform(y_pred.reshape(-1, 1)).flatten()
+                y_std = y_std * scaler_y.scale_[0]
 
             metrics = build_metrics(y_test, y_pred, y_std)
             m1, m2, m3, m4, m5 = st.columns(5)
@@ -416,13 +479,13 @@ def main() -> None:
             st.subheader("Inference results (test samples)")
             out_df = pl.DataFrame(
                 {
-                    "y_real": y_test,
-                    "y_pred_media": y_pred,
+                    "y_true": y_test,
+                    "y_pred_mean": y_pred,
                     "y_pred_std": y_std,
-                    "error_abs": np.abs(y_test - y_pred),
+                    "abs_error": np.abs(y_test - y_pred),
                 }
             )
-            st.dataframe(out_df.sort("error_abs", descending=True).head(30), width="stretch")
+            st.dataframe(out_df.sort("abs_error", descending=True).head(30), width="stretch")
 
             with st.expander("Configuration used"):
                 st.json(cfg_dict)
