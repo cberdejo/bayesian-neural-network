@@ -73,7 +73,6 @@ def sample_hmc(
         tau_out=cfg.tau_out,
         tau_list=tau_list,
         verbose=True,
-        debug=1,
         store_on_GPU=(device.type == "cuda"),
     )
     return params_hmc
@@ -94,11 +93,14 @@ def predict_hmc(
     if x_t.ndim == 1:
         x_t = x_t.unsqueeze(-1)
 
-    y_t = None
     if y is not None:
         y_t = torch.tensor(y, dtype=dtype, device=device)
         if y_t.ndim == 1:
             y_t = y_t.unsqueeze(-1)
+    else:
+        # hamiltorch.predict_model requires both x and y (or a test_loader).
+        # For inference-only calls, provide a dummy y with the expected shape.
+        y_t = torch.zeros((x_t.shape[0], 1), dtype=dtype, device=device)
 
     tau_list = torch.tensor(
         [cfg.tau_prior for _ in net.parameters()],
