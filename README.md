@@ -9,6 +9,9 @@
 ![SciPy](https://img.shields.io/badge/SciPy-%230C55A5.svg?style=for-the-badge&logo=scipy&logoColor=%white)
 ![Polars](https://img.shields.io/badge/polars-0075ff?style=for-the-badge&logo=polars&logoColor=white)
 
+
+![pbp-result-demo](docs/result.png)
+
 Reference implementations and clear documentation of state-of-the-art Bayesian Neural Network (BNN) methods. Suited for safety-critical and high-stakes applications where predictive uncertainty matters more than a single point estimate.
 
 
