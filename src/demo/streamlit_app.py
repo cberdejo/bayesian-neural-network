@@ -5,7 +5,6 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 import streamlit as st
@@ -27,8 +26,10 @@ from packages.mc_dropout import (
 )
 from packages.pbp import PBPConfig, PBP_net
 from packages.vi_bb import BayesianMLP, VIBBConfig
+from inference_results import render_results  
 from metrics.compute_metrics import compute_metrics
-
+from hpo import render_hpo_section
+from metric_explanation import show_metric_explanations
 DATASET_PATH = PROJECT_ROOT / "dataset" / "Concrete_Data.xls"
 MODEL_OPTIONS = ["MC Dropout", "VI-BB", "PBP", "HMC", "ABC-SS"]
 NOTEBOOK_URLS = {
@@ -55,8 +56,11 @@ NOTEBOOK_URLS = {
 }
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Dataset helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
 def parse_hidden_layers(raw: str) -> list[int]:
-    """Parse a comma-separated string into a list of valid hidden layer sizes."""
     values = [v.strip() for v in raw.split(",") if v.strip()]
     if not values:
         raise ValueError("You must enter at least one hidden layer. Example: 64,32")
@@ -68,7 +72,6 @@ def parse_hidden_layers(raw: str) -> list[int]:
 
 @st.cache_data(show_spinner=False)
 def load_and_clean_dataset(path: Path) -> pl.DataFrame:
-    """Loads dataset from disk and applies basic cleaning, with Streamlit cache."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
     return _clean_dataset(_read_dataset(path, path.name))
@@ -76,12 +79,10 @@ def load_and_clean_dataset(path: Path) -> pl.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_and_clean_uploaded_dataset(file_bytes: bytes, file_name: str) -> pl.DataFrame:
-    """Loads a user-uploaded dataset into memory and returns a cleaned version."""
     return _clean_dataset(_read_dataset(io.BytesIO(file_bytes), file_name))
 
 
 def _read_dataset(source: Path | io.BytesIO, file_name: str) -> pl.DataFrame:
-    """Reads a dataset in CSV/Excel format and returns a Polars DataFrame."""
     suffix = Path(file_name).suffix.lower()
     if suffix == ".csv":
         return pl.read_csv(source)
@@ -91,41 +92,12 @@ def _read_dataset(source: Path | io.BytesIO, file_name: str) -> pl.DataFrame:
 
 
 def _clean_dataset(df: pl.DataFrame) -> pl.DataFrame:
-    """Removes duplicate and null rows, preserving original order of observations."""
     return df.unique(maintain_order=True).drop_nulls()
 
 
-def plot_inference(y_true: np.ndarray, y_pred: np.ndarray, y_std: np.ndarray) -> plt.Figure:
-    """Generates fit and uncertainty plots for inference results."""
-    order = np.argsort(y_true)
-    yt = y_true[order]
-    yp = y_pred[order]
-    ys = y_std[order]
-
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-
-    ax0 = axes[0]
-    ax0.scatter(yt, yp, alpha=0.8, edgecolor="k", linewidth=0.3)
-    min_v = float(min(yt.min(), yp.min()))
-    max_v = float(max(yt.max(), yp.max()))
-    ax0.plot([min_v, max_v], [min_v, max_v], linestyle="--")
-    ax0.set_title("Prediction vs true value")
-    ax0.set_xlabel("True y")
-    ax0.set_ylabel("Predicted y")
-
-    ax1 = axes[1]
-    x_axis = np.arange(len(yt))
-    ax1.plot(x_axis, yt, label="True", linewidth=2)
-    ax1.plot(x_axis, yp, label="Predictive mean", linewidth=2)
-    ax1.fill_between(x_axis, yp - 1.96 * ys, yp + 1.96 * ys, alpha=0.25, label="95% CI")
-    ax1.set_title("Inference with uncertainty")
-    ax1.set_xlabel("Samples (sorted)")
-    ax1.set_ylabel("Concrete strength")
-    ax1.legend(loc="best")
-
-    fig.tight_layout()
-    return fig
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Model runner
+# ──────────────────────────────────────────────────────────────────────────────
 
 def run_model(
     model_name: str,
@@ -134,7 +106,6 @@ def run_model(
     y_train: np.ndarray,
     params: dict,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Trains the selected Bayesian model and returns mean prediction, std, and config."""
     input_dim = X_train.shape[1]
     hidden = parse_hidden_layers(params["hidden_layers"])
 
@@ -217,12 +188,14 @@ def run_model(
     return y_pred.reshape(-1), y_std.reshape(-1), asdict(cfg)
 
 
-def model_settings(model_name: str) -> dict:
-    """Builds Streamlit UI controls for each model and returns selected hyperparameters."""
+# ──────────────────────────────────────────────────────────────────────────────
+# Manual hyperparameter controls
+# ──────────────────────────────────────────────────────────────────────────────
+
+def model_settings_manual(model_name: str) -> dict:
     st.subheader("Architecture")
     hidden_layers = st.text_input(
-        "Hidden layers",
-        value="32,16",
+        "Hidden layers", value="32,16",
         help="Comma-separated list. Example: 64,32 defines two hidden layers.",
     )
     seed = st.number_input("Seed", value=42, step=1)
@@ -240,12 +213,12 @@ def model_settings(model_name: str) -> dict:
         )
         return {
             "hidden_layers": hidden_layers,
-            "seed": int(seed),
-            "dropout_p": st.slider("dropout_p", 0.05, 0.9, 0.2, 0.05),
-            "epochs": st.number_input("epochs", min_value=10, value=150, step=10),
-            "batch_size": st.number_input("batch_size", min_value=4, value=32, step=4),
-            "lr": st.number_input("lr", min_value=1e-5, value=1e-3, step=1e-4, format="%.5f"),
-            "mc_samples": st.number_input("mc_samples", min_value=10, value=100, step=10),
+            "seed":          int(seed),
+            "dropout_p":     st.slider("dropout_p", 0.05, 0.9, 0.2, 0.05),
+            "epochs":        st.number_input("epochs", min_value=10, value=150, step=10),
+            "batch_size":    st.number_input("batch_size", min_value=4, value=32, step=4),
+            "lr":            st.number_input("lr", min_value=1e-5, value=1e-3, step=1e-4, format="%.5f"),
+            "mc_samples":    st.number_input("mc_samples", min_value=10, value=100, step=10),
         }
 
     if model_name == "VI-BB":
@@ -260,17 +233,17 @@ def model_settings(model_name: str) -> dict:
 """
         )
         return {
-            "hidden_layers": hidden_layers,
-            "seed": int(seed),
-            "activation": st.selectbox("activation", ["tanh", "relu"]),
-            "prior_sigma_1": st.number_input("prior_sigma_1", min_value=0.01, value=1.5, step=0.05),
-            "prior_sigma_2": st.number_input("prior_sigma_2", min_value=0.01, value=0.1, step=0.01),
-            "prior_pi": st.slider("prior_pi", 0.01, 0.99, 0.5, 0.01),
-            "kl_weight": st.number_input("kl_weight", min_value=1e-4, value=1.0, step=0.1, format="%.4f"),
-            "noise_std": st.number_input("noise_std", min_value=1e-3, value=1.0, step=0.1, format="%.3f"),
-            "lr": st.number_input("lr", min_value=1e-5, value=0.01, step=1e-3, format="%.5f"),
-            "epochs": st.number_input("epochs", min_value=50, value=600, step=50),
-            "mc_samples": st.number_input("mc_samples", min_value=10, value=100, step=10),
+            "hidden_layers":  hidden_layers,
+            "seed":           int(seed),
+            "activation":     st.selectbox("activation", ["tanh", "relu"]),
+            "prior_sigma_1":  st.number_input("prior_sigma_1", min_value=0.01, value=1.5, step=0.05),
+            "prior_sigma_2":  st.number_input("prior_sigma_2", min_value=0.01, value=0.1, step=0.01),
+            "prior_pi":       st.slider("prior_pi", 0.01, 0.99, 0.5, 0.01),
+            "kl_weight":      st.number_input("kl_weight", min_value=1e-4, value=1.0, step=0.1, format="%.4f"),
+            "noise_std":      st.number_input("noise_std", min_value=1e-3, value=1.0, step=0.1, format="%.3f"),
+            "lr":             st.number_input("lr", min_value=1e-5, value=0.01, step=1e-3, format="%.5f"),
+            "epochs":         st.number_input("epochs", min_value=50, value=600, step=50),
+            "mc_samples":     st.number_input("mc_samples", min_value=10, value=100, step=10),
         }
 
     if model_name == "PBP":
@@ -282,8 +255,8 @@ def model_settings(model_name: str) -> dict:
         )
         return {
             "hidden_layers": hidden_layers,
-            "seed": int(seed),
-            "n_epochs": st.number_input("n_epochs", min_value=1, value=25, step=1),
+            "seed":          int(seed),
+            "n_epochs":      st.number_input("n_epochs", min_value=1, value=25, step=1),
         }
 
     if model_name == "HMC":
@@ -292,21 +265,21 @@ def model_settings(model_name: str) -> dict:
 **Hyperparameters (HMC)**
 - `step_size`: step size of the Hamiltonian integrator.
 - `num_samples`: number of posterior samples.
-- `num_steps_per_sample`: leapfrog steps per sample.
+- `num_steps_per_sample`: leapfrog steps per leapfrog step.
 - `tau_out`: output noise precision (likelihood).
 - `tau_prior`: prior precision on weights.
 - `burn_frac`: initial fraction discarded as burn-in.
 """
         )
         return {
-            "hidden_layers": hidden_layers,
-            "seed": int(seed),
-            "step_size": st.number_input("step_size", min_value=1e-5, value=0.0015, step=1e-4, format="%.5f"),
-            "num_samples": st.number_input("num_samples", min_value=20, value=120, step=20),
+            "hidden_layers":        hidden_layers,
+            "seed":                 int(seed),
+            "step_size":            st.number_input("step_size", min_value=1e-5, value=0.0015, step=1e-4, format="%.5f"),
+            "num_samples":          st.number_input("num_samples", min_value=20, value=120, step=20),
             "num_steps_per_sample": st.number_input("num_steps_per_sample", min_value=5, value=10, step=1),
-            "tau_out": st.number_input("tau_out", min_value=0.01, value=100.0, step=1.0),
-            "tau_prior": st.number_input("tau_prior", min_value=0.01, value=1.0, step=0.1),
-            "burn_frac": st.slider("burn_frac", 0.05, 0.9, 0.5, 0.05),
+            "tau_out":              st.number_input("tau_out", min_value=0.01, value=100.0, step=1.0),
+            "tau_prior":            st.number_input("tau_prior", min_value=0.01, value=1.0, step=0.1),
+            "burn_frac":            st.slider("burn_frac", 0.05, 0.9, 0.5, 0.05),
         }
 
     st.markdown(
@@ -322,20 +295,67 @@ def model_settings(model_name: str) -> dict:
     )
     return {
         "hidden_layers": hidden_layers,
-        "seed": int(seed),
-        "activation": st.selectbox("activation", ["tanh", "relu", "sigmoid"]),
-        "n_samples": st.number_input("n_samples", min_value=200, value=2500, step=100),
-        "sim_levels": st.number_input("sim_levels", min_value=1, value=3, step=1),
-        "p0": st.slider("p0", 0.05, 0.5, 0.2, 0.05),
-        "initial_std": st.number_input("initial_std", min_value=0.01, value=0.4, step=0.05, format="%.2f"),
-        "prior_low": st.number_input("prior_low", value=-1.0, step=0.1),
-        "prior_high": st.number_input("prior_high", value=1.0, step=0.1),
-        "n_best": st.number_input("n_best", min_value=10, value=200, step=10),
+        "seed":          int(seed),
+        "activation":    st.selectbox("activation", ["tanh", "relu", "sigmoid"]),
+        "n_samples":     st.number_input("n_samples", min_value=200, value=2500, step=100),
+        "sim_levels":    st.number_input("sim_levels", min_value=1, value=3, step=1),
+        "p0":            st.slider("p0", 0.05, 0.5, 0.2, 0.05),
+        "initial_std":   st.number_input("initial_std", min_value=0.01, value=0.4, step=0.05, format="%.2f"),
+        "prior_low":     st.number_input("prior_low", value=-1.0, step=0.1),
+        "prior_high":    st.number_input("prior_high", value=1.0, step=0.1),
+        "n_best":        st.number_input("n_best", min_value=10, value=200, step=10),
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Optuna search-space controls
+# ──────────────────────────────────────────────────────────────────────────────
+
+def model_settings_optuna() -> dict:
+    col_a, col_b = st.columns(2)
+    with col_a:
+        n_trials = st.number_input(
+            "Number of trials", min_value=5, max_value=500, value=30, step=5,
+            help="More trials → better search, longer runtime.",
+        )
+        alpha = st.slider(
+            "Coverage α", min_value=0.01, max_value=0.20, value=0.05, step=0.01,
+            help="α=0.05 targets 95 % coverage for PICP / Winkler.",
+        )
+    with col_b:
+        _OBJ_OPTIONS = ["RMSE", "MAE", "PICP loss", "MPIW", "NLL", "Winkler"]
+        _OBJ_HELP = {
+            "RMSE":      "Point accuracy — lower is better",
+            "MAE":       "Robust point accuracy",
+            "PICP loss": "(PICP − target)² — pushes coverage to 1−α",
+            "MPIW":      "Interval width — narrower means sharper bands",
+            "NLL":       "Gaussian NLL — balances accuracy and calibration",
+            "Winkler":   "Width + miscoverage penalty — overall calibration",
+        }
+        selected_objectives = st.multiselect(
+            "Objectives to minimise",
+            options=_OBJ_OPTIONS,
+            default=["RMSE", "PICP loss", "MPIW", "NLL"],
+            format_func=lambda o: f"{o}  —  {_OBJ_HELP[o]}",
+            help="1 objective → TPE sampler.  2+ objectives → NSGA-II (Pareto front).",
+        )
+
+    st.info(
+        "Optuna will automatically explore the architecture (number and size of "
+        "hidden layers) and all model-specific hyperparameters. No manual values needed."
+    )
+    return {
+        "n_trials":   int(n_trials),
+        "alpha":      float(alpha),
+        "objectives": selected_objectives,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────────────────────────────────────
+
 def main() -> None:
-    """Orchestrates the Streamlit UI: data, configuration, training, and results."""
     st.set_page_config(page_title="Demo Bayesian-NN", layout="wide")
     st.title("Bayesian Neural Networks")
     st.write(
@@ -343,16 +363,13 @@ def main() -> None:
         "tune hyperparameters, and run inference with metrics."
     )
 
+    # ── Dataset ───────────────────────────────────────────────────────────────
     st.subheader("Dataset")
-    dataset_mode = st.radio(
-        "Dataset source",
-        options=["Use default dataset", "Upload dataset"],
-    )
+    dataset_mode = st.radio("Dataset source", ["Use default dataset", "Upload dataset"])
 
     if dataset_mode == "Upload dataset":
         uploaded_file = st.file_uploader(
-            "Upload a dataset",
-            type=["xls", "xlsx", "csv"],
+            "Upload a dataset", type=["xls", "xlsx", "csv"],
             help="Supported formats: .xls, .xlsx, .csv",
         )
         if uploaded_file is None:
@@ -364,123 +381,140 @@ def main() -> None:
         df = load_and_clean_dataset(DATASET_PATH)
         st.caption(f"Loaded dataset: `{DATASET_PATH.name}`")
 
-    target_default = df.columns[-1]
     all_columns = df.columns
+    target_default = all_columns[-1]
 
     st.subheader("Clean dataset")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Rows", f"{len(df):,}")
-    c2.metric("Columns", f"{df.shape[1]:,}")
+    c1.metric("Rows",       f"{len(df):,}")
+    c2.metric("Columns",    f"{df.shape[1]:,}")
     c3.metric("Duplicates", f"{df.is_duplicated().sum():,}")
-    st.dataframe(df.head(20), width="stretch")
+    st.dataframe(df.head(20), use_container_width=True)
 
     with st.expander("Select features and target"):
-        target_col = st.selectbox("Target", options=all_columns, index=all_columns.index(target_default))
+        target_col = st.selectbox(
+            "Target", options=all_columns, index=all_columns.index(target_default)
+        )
         feature_cols = [c for c in all_columns if c != target_col]
         selected_features = st.multiselect(
-            "Features",
-            options=feature_cols,
-            default=feature_cols,
-            help="You can disable columns to compare model sensitivity.",
+            "Features", options=feature_cols, default=feature_cols,
+            help="Disable columns to compare model sensitivity.",
         )
 
     if not selected_features:
         st.warning("Select at least one feature to train the model.")
         return
-
-    st.markdown("---")
-    st.subheader("Model Configuration")
-    model_name_col, info_col_button = st.columns([11, 1], vertical_alignment="bottom")
-
-    with model_name_col:
-        model_name = st.selectbox("Model", MODEL_OPTIONS)
-    with info_col_button:
-        st.link_button(
-            "ℹ️ Theory",
-            url=NOTEBOOK_URLS.get(model_name),
-        )
-
-    params = model_settings(model_name)
-
+        
+    # ── Dataset split & preprocessing ────────────────────────────────────────
     st.subheader("Dataset split")
     test_size = st.slider("test_size", 0.1, 0.5, 0.2, 0.05)
+    split_seed = st.number_input(
+        "split_seed",
+        min_value=0,
+        value=42,
+        step=1,
+        help="Random seed used for train/test split in both manual and Optuna modes.",
+    )
     st.markdown("---")
 
     st.subheader("Preprocessing")
     scale_X = st.checkbox("Scale Features (X)", value=True)
     scale_y = st.checkbox("Scale Target (y)", value=True)
 
-    if st.button("Train and run inference", type="primary"):
-        try:
-            X = np.asarray(df[selected_features].to_numpy(), dtype=np.float64)
-            y = np.asarray(df[target_col].to_numpy(), dtype=np.float64)
+    # ── Model selection ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Model Configuration")
 
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=test_size, random_state=params["seed"]
-            )
+    model_name_col, info_col_button = st.columns([11, 1], vertical_alignment="bottom")
+    with model_name_col:
+        model_name = st.selectbox("Model", MODEL_OPTIONS)
+    with info_col_button:
+        st.link_button("ℹ️ Theory", url=NOTEBOOK_URLS[model_name])
 
-            if scale_X:
-                scaler_X = StandardScaler()
-                X_train_model = scaler_X.fit_transform(X_train)
-                X_test_model = scaler_X.transform(X_test)
-            else:
-                X_train_model = X_train
-                X_test_model = X_test
+    # ── Hyperparameter mode ───────────────────────────────────────────────────
+    st.markdown("#### Hyperparameter mode")
+    hp_mode = st.radio(
+        "hp_mode",
+        options=["✋ Manual", "🔬 Optimise with Optuna"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
 
-            if scale_y:
-                scaler_y = StandardScaler()
-                y_train_model = scaler_y.fit_transform(y_train.reshape(-1, 1)).flatten()
-            else:
-                y_train_model = y_train
+    if hp_mode == "✋ Manual":
+        params = model_settings_manual(model_name)
+    else:
+        optuna_cfg = model_settings_optuna()
+        show_metric_explanations(optuna_cfg["alpha"])
 
-            with st.spinner("Training model and running inference..."):
-                y_pred, y_std, cfg_dict = run_model(
-                    model_name, X_train_model, X_test_model, y_train_model, params
+
+
+    # ── Shared data preparation (used by manual + Optuna) ────────────────────
+    def _prepare_data():
+        X = np.asarray(df[selected_features].to_numpy(), dtype=np.float64)
+        y = np.asarray(df[target_col].to_numpy(), dtype=np.float64)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=int(split_seed)
+        )
+        _scaler_y = None
+        if scale_X:
+            sx = StandardScaler()
+            X_train_m = sx.fit_transform(X_train)
+            X_test_m  = sx.transform(X_test)
+        else:
+            X_train_m, X_test_m = X_train, X_test
+        if scale_y:
+            _scaler_y = StandardScaler()
+            y_train_m = _scaler_y.fit_transform(y_train.reshape(-1, 1)).flatten()
+        else:
+            y_train_m = y_train
+        return X_train_m, X_test_m, y_train_m, y_test, _scaler_y
+
+    # ── Manual mode ───────────────────────────────────────────────────────────
+    if hp_mode == "✋ Manual":
+
+
+        if st.button("▶ Train and run inference", type="primary"):
+            try:
+                X_train_m, X_test_m, y_train_m, y_test, _scaler_y = _prepare_data()
+                with st.spinner("Training model and running inference..."):
+                    y_pred, y_std, cfg_dict = run_model(
+                        model_name, X_train_m, X_test_m, y_train_m, params
+                    )
+                if scale_y and _scaler_y is not None:
+                    y_pred = _scaler_y.inverse_transform(y_pred.reshape(-1, 1)).flatten()
+                    y_std  = y_std * float(_scaler_y.scale_[0])
+
+                metrics = compute_metrics(y_test, y_pred, y_std, alpha=0.05)
+                show_metric_explanations(0.05)
+                render_results(y_test, y_pred, y_std, cfg_dict, metrics, alpha=0.05)
+
+            except Exception as exc:
+                st.error(f"An error occurred during execution: {exc}")
+
+    # ── Optuna mode ───────────────────────────────────────────────────────────
+    else:
+        if not optuna_cfg["objectives"]:
+            st.warning("Select at least one objective to run the optimisation.")
+            return
+
+        if st.button("▶ Run Optuna optimisation", type="primary"):
+            try:
+                X_train_m, X_test_m, y_train_m, y_test, _scaler_y = _prepare_data()
+
+                render_hpo_section(
+                    model_name=model_name,
+                    X_train=X_train_m,
+                    X_test=X_test_m,
+                    y_train=y_train_m,
+                    y_test=y_test,
+                    run_model_fn=run_model,
+                    scaler_y=_scaler_y if scale_y else None,
+                    n_trials=optuna_cfg["n_trials"],
+                    alpha=optuna_cfg["alpha"],
+                    objectives=optuna_cfg["objectives"],
                 )
-
-            if scale_y:
-                y_pred = scaler_y.inverse_transform(y_pred.reshape(-1, 1)).flatten()
-                y_std = y_std * scaler_y.scale_[0]
-
-            metrics = compute_metrics(y_test, y_pred, y_std, alpha=0.05)
-
-            m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("RMSE", f"{metrics['RMSE']:.4f}")
-            m2.metric("PICP", f"{metrics['PICP']:.4f}")
-            m3.metric("MPIW", f"{metrics['MPIW']:.4f}")
-            m4.metric("NLL", f"{metrics['NLL']:.4f}")
-            m5.metric("Winkler", f"{metrics['Winkler']:.4f}")
-
-            with st.expander("What do these metrics mean?"):
-                st.markdown(
-                    """
-- **RMSE**: Root-mean-squared error of the predictive mean; lower is better.
-- **PICP**: Fraction of true targets falling inside the predictive interval (e.g. 95 %).
-- **MPIW**: Average width of the predictive interval; narrower means sharper predictions.
-- **NLL**: Gaussian negative log-likelihood, combining accuracy and uncertainty calibration.
-- **Winkler**: Proper scoring rule that penalises intervals that are too wide or that miss the true value.
-"""
-                )
-
-            st.subheader("Inference plot")
-            fig = plot_inference(y_test, y_pred, y_std)
-            st.pyplot(fig, width="stretch")
-
-            st.subheader("Inference results (test samples)")
-            out_df = pl.DataFrame(
-                {
-                    "y_true": y_test,
-                    "y_pred_mean": y_pred,
-                    "y_pred_std": y_std,
-                    "abs_error": np.abs(y_test - y_pred),
-                }
-            )
-            st.dataframe(out_df.sort("abs_error", descending=True).head(30), width="stretch")
-
-            with st.expander("Configuration used"):
-                st.json(cfg_dict)
-        except Exception as exc:
-            st.error(f"An error occurred during execution: {exc}")
+            except Exception as exc:
+                st.error(f"An error occurred during execution: {exc}")
 
 
 if __name__ == "__main__":
