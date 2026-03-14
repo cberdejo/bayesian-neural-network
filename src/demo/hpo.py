@@ -16,111 +16,40 @@ import optuna
 import polars as pl
 import streamlit as st
 
-from inference_results import plot_inference   # shared rendering
+from inference_results import plot_inference  
 from metrics.compute_metrics import compute_metrics
-from metric_explanation import show_metric_explanations
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Per-model search spaces
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _suggest_mc_dropout(trial: optuna.Trial, _: int) -> dict[str, Any]:
-    n = trial.suggest_int("n_hidden", 1, 3)
-    hidden = [trial.suggest_int(f"units_{i}", 16, 128, step=16) for i in range(n)]
-    return {
-        "hidden_layers": ",".join(map(str, hidden)),
-        "dropout_p":  trial.suggest_float("dropout_p", 0.05, 0.5),
-        "epochs":     trial.suggest_int("epochs", 50, 300, step=50),
-        "batch_size": trial.suggest_categorical("batch_size", [16, 32, 64]),
-        "lr":         trial.suggest_float("lr", 1e-4, 1e-2, log=True),
-        "mc_samples": trial.suggest_categorical("mc_samples", [50, 100, 200]),
-        "seed": 42,
-    }
-
-
-def _suggest_vi_bb(trial: optuna.Trial, _: int) -> dict[str, Any]:
-    n = trial.suggest_int("n_hidden", 1, 3)
-    hidden = [trial.suggest_int(f"units_{i}", 16, 64, step=16) for i in range(n)]
-    return {
-        "hidden_layers":  ",".join(map(str, hidden)),
-        "activation":     trial.suggest_categorical("activation", ["tanh", "relu"]),
-        "prior_sigma_1":  trial.suggest_float("prior_sigma_1", 0.5, 3.0),
-        "prior_sigma_2":  trial.suggest_float("prior_sigma_2", 0.01, 0.5, log=True),
-        "prior_pi":       trial.suggest_float("prior_pi", 0.1, 0.9),
-        "kl_weight":      trial.suggest_float("kl_weight", 1e-3, 1.0, log=True),
-        "noise_std":      trial.suggest_float("noise_std", 0.1, 3.0),
-        "lr":             trial.suggest_float("lr", 1e-4, 1e-2, log=True),
-        "epochs":         trial.suggest_int("epochs", 200, 800, step=200),
-        "mc_samples":     trial.suggest_categorical("mc_samples", [50, 100, 200]),
-        "seed": 42,
-    }
-
-
-def _suggest_pbp(trial: optuna.Trial, _: int) -> dict[str, Any]:
-    n = trial.suggest_int("n_hidden", 1, 3)
-    hidden = [trial.suggest_int(f"units_{i}", 10, 50, step=10) for i in range(n)]
-    return {
-        "hidden_layers": ",".join(map(str, hidden)),
-        "n_epochs": trial.suggest_int("n_epochs", 10, 60, step=5),
-        "seed": 42,
-    }
-
-
-def _suggest_hmc(trial: optuna.Trial, _: int) -> dict[str, Any]:
-    n = trial.suggest_int("n_hidden", 1, 2)
-    hidden = [trial.suggest_int(f"units_{i}", 10, 40, step=10) for i in range(n)]
-    return {
-        "hidden_layers":          ",".join(map(str, hidden)),
-        "step_size":              trial.suggest_float("step_size", 5e-4, 5e-3, log=True),
-        "num_samples":            trial.suggest_int("num_samples", 60, 200, step=20),
-        "num_steps_per_sample":   trial.suggest_int("num_steps_per_sample", 5, 20),
-        "tau_out":                trial.suggest_float("tau_out", 10.0, 200.0, log=True),
-        "tau_prior":              trial.suggest_float("tau_prior", 0.1, 10.0, log=True),
-        "burn_frac":              trial.suggest_float("burn_frac", 0.2, 0.6),
-        "seed": 42,
-    }
-
-
-def _suggest_abc_ss(trial: optuna.Trial, _: int) -> dict[str, Any]:
-    n = trial.suggest_int("n_hidden", 1, 2)
-    hidden = [trial.suggest_int(f"units_{i}", 8, 32, step=8) for i in range(n)]
-    return {
-        "hidden_layers": ",".join(map(str, hidden)),
-        "activation":    trial.suggest_categorical("activation", ["tanh", "relu", "sigmoid"]),
-        "n_samples":     trial.suggest_int("n_samples", 500, 3000, step=500),
-        "sim_levels":    trial.suggest_int("sim_levels", 2, 5),
-        "p0":            trial.suggest_float("p0", 0.1, 0.4),
-        "initial_std":   trial.suggest_float("initial_std", 0.1, 1.0),
-        "prior_low":     trial.suggest_float("prior_low", -3.0, -0.5),
-        "prior_high":    trial.suggest_float("prior_high", 0.5, 3.0),
-        "n_best":        trial.suggest_categorical("n_best", [100, 200, 500]),
-        "seed": 42,
-    }
-
-
-_SUGGESTERS: dict[str, Callable] = {
-    "MC Dropout": _suggest_mc_dropout,
-    "VI-BB":      _suggest_vi_bb,
-    "PBP":        _suggest_pbp,
-    "HMC":        _suggest_hmc,
-    "ABC-SS":     _suggest_abc_ss,
-}
-
+from suggestions_optuna_models import get_suggester
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Reconstruct run_model-compatible params from a frozen Optuna trial
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _params_from_trial(trial: optuna.FrozenTrial) -> dict[str, Any]:
+def _params_from_trial(trial: optuna.FrozenTrial, model_name: str | None = None) -> dict[str, Any]:
     """
     Optuna stores architecture as n_hidden + units_0, units_1, …
     run_model() expects a single "hidden_layers" string like "32,16".
+    
+    For ABC-SS, also reconstructs derived parameters:
+    - prior_low, prior_high from prior_half
+    - n_best from n_samples and n_best_frac
     """
     p = dict(trial.params)
     n_hidden = p.pop("n_hidden", None)
     if n_hidden is not None:
         hidden = [p.pop(f"units_{i}") for i in range(int(n_hidden))]
         p["hidden_layers"] = ",".join(map(str, hidden))
+    
+    # Reconstruct ABC-SS derived parameters
+    if model_name == "ABC-SS":
+        if "prior_half" in p and "prior_low" not in p:
+            prior_half = p.pop("prior_half")
+            p["prior_low"] = -prior_half
+            p["prior_high"] = prior_half
+        if "n_samples" in p and "n_best_frac" in p and "n_best" not in p:
+            n_samples = p["n_samples"]
+            n_best_frac = p["n_best_frac"]
+            p["n_best"] = max(50, int(n_samples * n_best_frac))
+    
     p.setdefault("seed", 42)
     return p
 
@@ -138,9 +67,10 @@ def _build_objective(
     objectives: list[str],
     alpha: float,
     run_model_fn: Callable,
+    search_space: dict[str, Any] | None = None,
     scaler_y=None,
 ) -> Callable:
-    suggest_fn = _SUGGESTERS[model_name]
+    suggest_fn = get_suggester(model_name, search_space)
 
     def objective(trial: optuna.Trial):
         params = suggest_fn(trial, X_train.shape[1])
@@ -189,6 +119,7 @@ def render_hpo_section(
     n_trials: int,
     alpha: float,
     objectives: list[str],
+    search_space: dict[str, Any] | None = None,
     scaler_y=None,
 ) -> tuple[np.ndarray, np.ndarray, dict] | None:
     """
@@ -205,6 +136,7 @@ def render_hpo_section(
         objectives=objectives,
         n_trials=n_trials,
         alpha=alpha,
+        search_space=search_space,
         scaler_y=scaler_y,
     )
 
@@ -223,6 +155,7 @@ def _run_study(
     objectives: list[str],
     n_trials: int,
     alpha: float,
+    search_space: dict[str, Any] | None = None,
     scaler_y=None,
 ) -> tuple[np.ndarray, np.ndarray, dict] | None:
     
@@ -237,7 +170,7 @@ def _run_study(
     )
     obj_fn = _build_objective(
         model_name, X_train, X_test, y_train, y_test,
-        objectives, alpha, run_model_fn, scaler_y,
+        objectives, alpha, run_model_fn, search_space, scaler_y,
     )
 
     progress_bar  = st.progress(0, text="Starting…")
@@ -296,10 +229,10 @@ def _run_study(
         # Strategy: minimize normalized L2 distance to the ideal point.
         compromise_trial = _select_compromise_trial(best_trials)
         st.markdown("**Compromise trial (best overall)**")
-        _show_single_best(compromise_trial, objectives)
+        _show_single_best(compromise_trial, objectives, model_name)
 
         # Re-run representative trial to enable inference diagnostics in multi-objective mode.
-        best_params = _params_from_trial(compromise_trial)
+        best_params = _params_from_trial(compromise_trial, model_name)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -315,10 +248,10 @@ def _run_study(
     else:
         best_trial = study.best_trial
         st.subheader("🏅 Best trial")
-        _show_single_best(best_trial, objectives)
+        _show_single_best(best_trial, objectives, model_name)
 
         # Re-run with reconstructed params to get predictions for the inference tab
-        best_params = _params_from_trial(best_trial)
+        best_params = _params_from_trial(best_trial, model_name)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -404,7 +337,7 @@ def _render_diagnostics(
             with tab:
                 st.warning(f"Could not render Optuna plots: {exc}")
 
-    # ── Inference tab (single-objective only) ─────────────────────────────────
+    # ── Inference tab ─────────────────────────────────
     if best_result is not None:
         y_pred, y_std, cfg_dict = best_result
         metrics = compute_metrics(y_test, y_pred, y_std, alpha=alpha)
@@ -435,7 +368,7 @@ def _as_list(values) -> list[float]:
         return [float(values)]
 
 
-def _show_single_best(trial: optuna.FrozenTrial, objectives: list[str]) -> None:
+def _show_single_best(trial: optuna.FrozenTrial, objectives: list[str], model_name: str | None = None) -> None:
     vals = _as_list(trial.values)
     c1, c2 = st.columns(2)
     with c1:
@@ -448,7 +381,7 @@ def _show_single_best(trial: optuna.FrozenTrial, objectives: list[str]) -> None:
         }))
     with c2:
         st.markdown("**Best hyperparameters**")
-        st.json(_params_from_trial(trial))
+        st.json(_params_from_trial(trial, model_name))
 
 
 def _select_compromise_trial(best_trials: list[optuna.FrozenTrial]) -> optuna.FrozenTrial:

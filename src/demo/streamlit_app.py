@@ -30,6 +30,7 @@ from inference_results import render_results
 from metrics.compute_metrics import compute_metrics
 from hpo import render_hpo_section
 from metric_explanation import show_metric_explanations
+from suggestions_optuna_models import DEFAULT_SEARCH_SPACES
 DATASET_PATH = PROJECT_ROOT / "dataset" / "Concrete_Data.xls"
 MODEL_OPTIONS = ["MC Dropout", "VI-BB", "PBP", "HMC", "ABC-SS"]
 NOTEBOOK_URLS = {
@@ -311,7 +312,224 @@ def model_settings_manual(model_name: str) -> dict:
 # Optuna search-space controls
 # ──────────────────────────────────────────────────────────────────────────────
 
-def model_settings_optuna() -> dict:
+def _int_range_inputs(
+    label: str,
+    key_prefix: str,
+    default: dict,
+    *,
+    min_limit: int = 1,
+) -> dict:
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        low = int(
+            st.number_input(
+                f"{label} min",
+                min_value=min_limit,
+                value=int(default["low"]),
+                step=1,
+                key=f"{key_prefix}_low",
+            )
+        )
+    with c2:
+        high = int(
+            st.number_input(
+                f"{label} max",
+                min_value=low,
+                value=max(int(default["high"]), low),
+                step=1,
+                key=f"{key_prefix}_high",
+            )
+        )
+    with c3:
+        step = int(
+            st.number_input(
+                f"{label} step",
+                min_value=1,
+                value=max(int(default.get("step", 1)), 1),
+                step=1,
+                key=f"{key_prefix}_step",
+            )
+        )
+    return {"low": low, "high": high, "step": step}
+
+
+def _float_range_inputs(
+    label: str,
+    key_prefix: str,
+    default: dict,
+    *,
+    min_limit: float = 0.0,
+    step: float = 0.01,
+    fmt: str = "%.4f",
+    allow_log: bool = False,
+) -> dict:
+    c1, c2 = st.columns(2)
+    with c1:
+        low = float(
+            st.number_input(
+                f"{label} min",
+                min_value=min_limit,
+                value=float(default["low"]),
+                step=step,
+                format=fmt,
+                key=f"{key_prefix}_low",
+            )
+        )
+    with c2:
+        high = float(
+            st.number_input(
+                f"{label} max",
+                min_value=low,
+                value=max(float(default["high"]), low),
+                step=step,
+                format=fmt,
+                key=f"{key_prefix}_high",
+            )
+        )
+    spec = {"low": low, "high": high}
+    if allow_log:
+        spec["log"] = bool(
+            st.checkbox(
+                f"{label} in log scale",
+                value=bool(default.get("log", False)),
+                key=f"{key_prefix}_log",
+            )
+        )
+    return spec
+
+
+def _build_search_space_controls(model_name: str) -> dict:
+    d = DEFAULT_SEARCH_SPACES[model_name]
+    space: dict = {}
+
+    st.markdown("#### Search space suggestions")
+    st.caption("Configura los rangos/choices que Optuna va a explorar.")
+
+    with st.expander("Arquitectura", expanded=True):
+        space["n_hidden"] = _int_range_inputs("n_hidden", f"{model_name}_n_hidden", d["n_hidden"])
+        space["units"] = _int_range_inputs("units", f"{model_name}_units", d["units"])
+
+    if model_name == "MC Dropout":
+        with st.expander("Parámetros MC Dropout", expanded=False):
+            space["dropout_p"] = _float_range_inputs(
+                "dropout_p", f"{model_name}_dropout_p", d["dropout_p"], min_limit=0.0, step=0.01, fmt="%.3f"
+            )
+            space["epochs"] = _int_range_inputs("epochs", f"{model_name}_epochs", d["epochs"])
+            space["batch_size"] = {
+                "choices": st.multiselect(
+                    "batch_size choices",
+                    options=[8, 16, 32, 64, 128, 256],
+                    default=d["batch_size"]["choices"],
+                    key=f"{model_name}_batch_size_choices",
+                )
+            }
+            space["lr"] = _float_range_inputs(
+                "lr", f"{model_name}_lr", d["lr"], min_limit=1e-6, step=1e-4, fmt="%.6f", allow_log=True
+            )
+            space["mc_samples"] = {
+                "choices": st.multiselect(
+                    "mc_samples choices",
+                    options=[20, 50, 100, 200, 400],
+                    default=d["mc_samples"]["choices"],
+                    key=f"{model_name}_mc_samples_choices",
+                )
+            }
+
+    elif model_name == "VI-BB":
+        with st.expander("Parámetros VI-BB", expanded=False):
+            space["activation"] = {
+                "choices": st.multiselect(
+                    "activation choices",
+                    options=["tanh", "relu", "sigmoid"],
+                    default=d["activation"]["choices"],
+                    key=f"{model_name}_activation_choices",
+                )
+            }
+            space["prior_sigma_1"] = _float_range_inputs(
+                "prior_sigma_1", f"{model_name}_prior_sigma_1", d["prior_sigma_1"], min_limit=1e-4, step=0.05, fmt="%.4f"
+            )
+            space["prior_sigma_2"] = _float_range_inputs(
+                "prior_sigma_2", f"{model_name}_prior_sigma_2", d["prior_sigma_2"], min_limit=1e-6, step=0.001, fmt="%.6f", allow_log=True
+            )
+            space["prior_pi"] = _float_range_inputs(
+                "prior_pi", f"{model_name}_prior_pi", d["prior_pi"], min_limit=0.0, step=0.01, fmt="%.3f"
+            )
+            space["kl_weight"] = _float_range_inputs(
+                "kl_weight", f"{model_name}_kl_weight", d["kl_weight"], min_limit=1e-8, step=1e-4, fmt="%.6f", allow_log=True
+            )
+            space["noise_std"] = _float_range_inputs(
+                "noise_std", f"{model_name}_noise_std", d["noise_std"], min_limit=1e-6, step=0.01, fmt="%.4f", allow_log=True
+            )
+            space["lr"] = _float_range_inputs(
+                "lr", f"{model_name}_lr", d["lr"], min_limit=1e-6, step=1e-4, fmt="%.6f", allow_log=True
+            )
+            space["epochs"] = _int_range_inputs("epochs", f"{model_name}_epochs", d["epochs"])
+            space["mc_samples"] = {
+                "choices": st.multiselect(
+                    "mc_samples choices",
+                    options=[20, 50, 100, 200, 400],
+                    default=d["mc_samples"]["choices"],
+                    key=f"{model_name}_mc_samples_choices",
+                )
+            }
+
+    elif model_name == "PBP":
+        with st.expander("Parámetros PBP", expanded=False):
+            space["n_epochs"] = _int_range_inputs("n_epochs", f"{model_name}_n_epochs", d["n_epochs"])
+
+    elif model_name == "HMC":
+        with st.expander("Parámetros HMC", expanded=False):
+            space["step_size"] = _float_range_inputs(
+                "step_size", f"{model_name}_step_size", d["step_size"], min_limit=1e-6, step=1e-4, fmt="%.6f", allow_log=True
+            )
+            space["num_samples"] = _int_range_inputs("num_samples", f"{model_name}_num_samples", d["num_samples"])
+            space["num_steps_per_sample"] = _int_range_inputs(
+                "num_steps_per_sample", f"{model_name}_num_steps_per_sample", d["num_steps_per_sample"]
+            )
+            space["tau_out"] = _float_range_inputs(
+                "tau_out", f"{model_name}_tau_out", d["tau_out"], min_limit=1e-6, step=0.1, fmt="%.4f", allow_log=True
+            )
+            space["tau_prior"] = _float_range_inputs(
+                "tau_prior", f"{model_name}_tau_prior", d["tau_prior"], min_limit=1e-6, step=0.01, fmt="%.4f", allow_log=True
+            )
+            space["burn_frac"] = _float_range_inputs(
+                "burn_frac", f"{model_name}_burn_frac", d["burn_frac"], min_limit=0.0, step=0.01, fmt="%.3f"
+            )
+
+    else:  # ABC-SS
+        with st.expander("Parámetros ABC-SS", expanded=False):
+            space["activation"] = {
+                "choices": st.multiselect(
+                    "activation choices",
+                    options=["tanh", "relu", "sigmoid"],
+                    default=d["activation"]["choices"],
+                    key=f"{model_name}_activation_choices",
+                )
+            }
+            space["n_samples"] = _int_range_inputs("n_samples", f"{model_name}_n_samples", d["n_samples"])
+            space["sim_levels"] = _int_range_inputs("sim_levels", f"{model_name}_sim_levels", d["sim_levels"])
+            space["p0"] = _float_range_inputs("p0", f"{model_name}_p0", d["p0"], min_limit=0.0, step=0.01, fmt="%.3f")
+            space["initial_std"] = _float_range_inputs(
+                "initial_std", f"{model_name}_initial_std", d["initial_std"], min_limit=1e-6, step=0.01, fmt="%.4f"
+            )
+            space["prior_half"] = _float_range_inputs(
+                "prior_half", f"{model_name}_prior_half", d["prior_half"], min_limit=1e-6, step=0.1, fmt="%.4f"
+            )
+            space["n_best_frac"] = _float_range_inputs(
+                "n_best_frac", f"{model_name}_n_best_frac", d["n_best_frac"], min_limit=1e-3, step=0.01, fmt="%.3f"
+            )
+
+    invalid_choices = [k for k, v in space.items() if isinstance(v, dict) and "choices" in v and not v["choices"]]
+    if invalid_choices:
+        st.error(
+            "Cada parámetro categórico debe tener al menos una opción. "
+            f"Revisa: {', '.join(invalid_choices)}"
+        )
+        return {}
+    return space
+
+
+def model_settings_optuna(model_name: str) -> dict:
     col_a, col_b = st.columns(2)
     with col_a:
         n_trials = st.number_input(
@@ -344,10 +562,13 @@ def model_settings_optuna() -> dict:
         "Optuna will automatically explore the architecture (number and size of "
         "hidden layers) and all model-specific hyperparameters. No manual values needed."
     )
+    search_space = _build_search_space_controls(model_name)
+
     return {
         "n_trials":   int(n_trials),
         "alpha":      float(alpha),
         "objectives": selected_objectives,
+        "search_space": search_space if search_space else None,
     }
 
 
@@ -443,7 +664,7 @@ def main() -> None:
     if hp_mode == "✋ Manual":
         params = model_settings_manual(model_name)
     else:
-        optuna_cfg = model_settings_optuna()
+        optuna_cfg = model_settings_optuna(model_name)
         show_metric_explanations(optuna_cfg["alpha"])
 
 
@@ -496,6 +717,9 @@ def main() -> None:
         if not optuna_cfg["objectives"]:
             st.warning("Select at least one objective to run the optimisation.")
             return
+        if optuna_cfg["search_space"] is None:
+            st.warning("Configura el espacio de búsqueda antes de ejecutar Optuna.")
+            return
 
         if st.button("▶ Run Optuna optimisation", type="primary"):
             try:
@@ -512,6 +736,7 @@ def main() -> None:
                     n_trials=optuna_cfg["n_trials"],
                     alpha=optuna_cfg["alpha"],
                     objectives=optuna_cfg["objectives"],
+                    search_space=optuna_cfg["search_space"],
                 )
             except Exception as exc:
                 st.error(f"An error occurred during execution: {exc}")
