@@ -151,7 +151,9 @@ You can also upload your own file (CSV, XLS, or XLSX) and run the same training 
 ## Interesting papers 
 
 - [Physics-guided Bayesian neural networks by ABC-SS: Application to reinforced concrete columns](https://www.sciencedirect.com/science/article/abs/pii/S0952197622007801#preview-section-snippets)
-
+  
+- [Uncertainty quantification in Neural Networks by Approximate Bayesian Computation: Application to fatigue in composite materials](https://www.sciencedirect.com/science/article/pii/S0952197621003596)
+  
 - [Approximate Bayesian Computation by Subset Simulation](https://arxiv.org/abs/1404.6225)
 
 - [MCMC using Hamiltonian dynamics](https://arxiv.org/abs/1206.1901)
