@@ -164,10 +164,6 @@ You can also upload your own file (CSV, XLS, or XLSX) and run the same training 
 
 - [Weight Uncertainty in Neural Networks (Blundell, Cornebise, Kavukcuoglu & Wierstra, 2015).](https://arxiv.org/abs/1505.05424)
 
-## Special Thanks
-Thanks to [Juan Fernandez](https://www.linkedin.com/in/juanfdezsalas/) who taught me about `Approximate Bayesian Computation by Subset Simulation` and sparked my curoisity with Bayesian neural networks. 
-
-
 
 
 ## License
